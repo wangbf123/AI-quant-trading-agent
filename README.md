@@ -4,7 +4,80 @@
 
 > Agent 负责研究规划与提出候选；Qlib / LightGBM 负责训练、执行和验证。当前交付面向单用户、日频离线研究。
 
-## 交互式项目导览
+<table>
+<tr>
+<td align="center" width="16%"><a href="#主体思想">🧠<br/><b>主体思想</b></a></td>
+<td align="center" width="16%"><a href="#项目架构">🧩<br/><b>项目架构</b></a></td>
+<td align="center" width="16%"><a href="#内容地图">🗂️<br/><b>内容地图</b></a></td>
+<td align="center" width="16%"><a href="#快速开始">🚀<br/><b>运行项目</b></a></td>
+<td align="center" width="16%"><a href="docs/VALIDATION.md">✅<br/><b>验收记录</b></a></td>
+<td align="center" width="16%"><a href="#文档">📖<br/><b>文档索引</b></a></td>
+</tr>
+</table>
+
+[![智能体量化研究：从数据到研究、回测、记忆与最终封存的动态流程](docs/assets/research-flow.gif)](docs/ARCHITECTURE.md)
+
+<p align="center"><sub>研究流程示意，非实时任务或收益展示 · <a href="docs/assets/research-flow.png">查看静态图</a> · <a href="docs/ARCHITECTURE.md">阅读完整架构</a></sub></p>
+
+## 主体思想
+
+**把 Agent 变成有实验纪律的研究者。** 每个想法都要转化为可检验的候选，由确定性引擎计算结果，再决定下一轮研究。
+
+| 原则 | 在项目中的具体体现 |
+| --- | --- |
+| 研究决策与执行分离 | Agent 提出假设和候选；Qlib / LightGBM 计算因子、训练模型、回测并记录成本 |
+| 从真实失败中学习 | 将成本侵蚀、成本后负表现、回撤和子期不稳定保存为带上下文的证据 |
+| 先冻结选择，再看最终答案 | 训练、调参、研究验证和最终 holdout 分开；最终评估只领取一次，不回流记忆 |
+| 研究过程可以复核 | 数据与配置指纹、候选、事件、负结果和等预算对照一起进入证据包 |
+| 在已有工程上做增量 | 保留 QuantaAlpha 的研究循环、因子库和工作台，增量集中于研究质量与可复现性 |
+
+演示模式使用合成行情与确定性规划器，实际执行 Qlib 训练和回测；真实模型模式保留 StepFun 与 OpenAI 兼容接口。模型账号、真实市场效果与当前工程验收的边界见 [验收记录](docs/VALIDATION.md)。
+
+## 项目架构
+
+```mermaid
+flowchart LR
+    UI["React / TypeScript 工作台"] --> API["FastAPI / 研究协议"]
+    API --> AGENT["QuantaAlpha 研究 Agent"]
+    AGENT --> RUNNER["原有 BacktestRunner"]
+    DATA["版本化 Qlib 数据"] --> QLIB["Qlib / LightGBM / 成本模型"]
+    RUNNER --> QLIB
+    QLIB --> RESULT["研究验证指标与证据"]
+    RESULT --> MEMORY["经济性失败记忆"]
+    MEMORY --> AGENT
+    RESULT --> FREEZE["冻结候选与配置"]
+    FREEZE --> HOLDOUT["一次最终样本外评估"]
+    API --> DB[("SQLite / PostgreSQL")]
+    RESULT --> DB
+    API -. "可选分布式" .-> QUEUE["Redis / RQ Worker"]
+    QUEUE --> RUNNER
+    classDef research fill:#eef0ff,stroke:#818cf8,color:#312e81
+    classDef compute fill:#eaf5ff,stroke:#60a5fa,color:#1e3a8a
+    classDef final fill:#fff7e5,stroke:#e9ad48,color:#854d0e
+    class AGENT,MEMORY research
+    class RUNNER,QLIB,RESULT compute
+    class FREEZE,HOLDOUT final
+```
+
+实线展示主要研究链路，虚线表示可选队列。**最终样本外结果用于报告，不连接回候选生成或失败记忆。** 当前版本是日频离线研究平台；低延迟执行和实盘网关见架构文档中的扩展边界。
+
+## 内容地图
+
+从下表可以直接进入对应源码，而不必先启动网页。
+
+| 想看什么 | 从哪里开始 | 内容 |
+| --- | --- | --- |
+| Agent 如何研究 | [`quantaalpha/pipeline/`](quantaalpha/pipeline/) | 保留的因子挖掘、规划与进化流程 |
+| 研究实验如何串起来 | [`experiment.py`](quantaalpha/research/experiment.py) | 候选、回测、反馈、记忆与等预算消融 |
+| 失败如何变成记忆 | [`memory.py`](quantaalpha/research/memory.py) · [`hooks.py`](quantaalpha/research/hooks.py) | 失败证据、上下文检索、原研究循环接入 |
+| 如何防止反复使用测试集 | [`protocol.py`](quantaalpha/research/protocol.py) · [`store.py`](quantaalpha/research/store.py) | 时间窗口、标签 purge、冻结摘要与原子状态转换 |
+| 回测和成本怎么计算 | [`runner.py`](quantaalpha/backtest/runner.py) | 复用 Qlib 计算；保存成本前后指标与真实曲线 |
+| 模型接口如何接入 | [`anthropic_transport.py`](quantaalpha/research/anthropic_transport.py) · [`APIBackend`](quantaalpha/llm/client.py) | StepFun Messages 与保留的 OpenAI 路径 |
+| 数据和任务如何落地 | [`fixture.py`](quantaalpha/research/fixture.py) · [`jobs.py`](quantaalpha/research/jobs.py) | 合成 Qlib provider、持久化任务、Redis/RQ |
+| 网页与 API | [`frontend-v2/`](frontend-v2/) · [`research_api.py`](frontend-v2/backend/research_api.py) | 研究工作台、可视化、协议与证据导出 |
+| 如何复现和验证 | [`scripts/`](scripts/) · [`tests/`](tests/) · [CI](.github/workflows/ci.yml) | 安装、启动、浏览器／容器验收与自动检查 |
+
+## 网页工作台导览
 
 工作台默认进入「项目导览」，通过动态图展示系统架构、研究闭环与四窗口验证协议。点击节点查看模块职责并跳转相关工作台；支持自动演示、暂停、手动选择步骤，导航栏带有平滑的活动指示。小屏可横向查看架构图，系统减少动态效果设置会停用动画。
 

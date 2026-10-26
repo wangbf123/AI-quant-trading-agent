@@ -1,0 +1,41 @@
+name: Research platform checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      LOG_LLM_CHAT_CONTENT: "false"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend-v2/package-lock.json
+      - name: Install locked CPU environment and build workbench
+        run: bash scripts/setup.sh
+      - name: Unit and model-protocol contract tests
+        run: .venv/bin/python -m pytest -q tests
+      - name: Real Qlib synthetic research and sealed holdout
+        run: .venv/bin/aqr demo --budget 2 --finalize --data-dir data/results/ci
+      - name: Retain synthetic reproducibility artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-research-evidence
+          path: data/results/ci/
+          if-no-files-found: ignore

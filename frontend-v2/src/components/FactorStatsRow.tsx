@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Layers, TrendingUp, BarChart3 } from 'lucide-react';
 import { RealtimeMetrics } from '@/types';
-import { formatPercent, formatNumber } from '@/utils';
+import { formatPercent } from '@/utils';
 import { Badge } from '@/components/ui/Badge';
 
 interface FactorStatsRowProps {

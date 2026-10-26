@@ -30,14 +30,14 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
         <div className="flex flex-col items-center justify-center min-h-[60vh] pb-8 animate-fade-in-up">
           <div className="text-center mb-10">
             <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-primary via-purple-500 to-pink-500 bg-clip-text text-transparent">
-              欢迎使用 QuantaAlpha
+              QuantaAlpha 因子挖掘
             </h2>
             <p className="text-lg text-muted-foreground">
               用自然语言描述需求，AI 自动挖掘高质量量化因子
             </p>
             {backendAvailable === false && (
               <p className="text-sm text-warning mt-2">
-                后端未连接，将使用模拟数据演示
+                服务暂未连接，无法发起挖掘。研究协议页提供明确标识的合成数据实验。
               </p>
             )}
             {backendAvailable === true && (

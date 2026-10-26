@@ -9,6 +9,7 @@ import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionIte
 interface SystemConfig {
   // LLM
   apiKey: string;
+  apiProtocol: 'openai' | 'anthropic';
   apiUrl: string;
   modelName: string;
   // Qlib
@@ -30,8 +31,9 @@ interface SystemConfig {
 
 const DEFAULT_CONFIG: SystemConfig = {
   apiKey: '',
-  apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  modelName: 'deepseek-v3',
+  apiProtocol: 'anthropic',
+  apiUrl: 'https://api.stepfun.com/step_plan',
+  modelName: 'step-5-preview',
   qlibDataPath: '',
   resultsDir: '',
   defaultNumDirections: 2,
@@ -92,9 +94,10 @@ export const SettingsPage: React.FC = () => {
           } catch { /* use defaults */ }
         }
         setConfig({
-          apiKey: env.OPENAI_API_KEY || '',
-          apiUrl: env.OPENAI_BASE_URL || DEFAULT_CONFIG.apiUrl,
-          modelName: env.CHAT_MODEL || DEFAULT_CONFIG.modelName,
+          apiKey: env.AQR_LLM_API_KEY || env.OPENAI_API_KEY || '',
+          apiProtocol: env.AQR_LLM_PROTOCOL === 'openai' ? 'openai' : 'anthropic',
+          apiUrl: env.AQR_LLM_BASE_URL || env.OPENAI_BASE_URL || DEFAULT_CONFIG.apiUrl,
+          modelName: env.AQR_LLM_MODEL || env.CHAT_MODEL || DEFAULT_CONFIG.modelName,
           qlibDataPath: env.QLIB_DATA_DIR || '',
           resultsDir: env.DATA_RESULTS_DIR || '',
           defaultNumDirections: 2,
@@ -119,6 +122,7 @@ export const SettingsPage: React.FC = () => {
           setConfig({
             ...DEFAULT_CONFIG,
             ...parsed,
+            apiKey: '',
             selectedMiningDirectionIndices: Array.isArray(parsed.selectedMiningDirectionIndices)
               ? parsed.selectedMiningDirectionIndices
               : DEFAULT_CONFIG.selectedMiningDirectionIndices,
@@ -137,19 +141,23 @@ export const SettingsPage: React.FC = () => {
     setIsSaving(true);
     setError(null);
 
-    // Always save to localStorage as backup
-    localStorage.setItem('quantaalpha_config', JSON.stringify(config));
+    // Browser preferences never retain a model credential.
+    localStorage.setItem('quantaalpha_config', JSON.stringify({ ...config, apiKey: '' }));
 
     // Try to save to backend
     try {
       const update: Record<string, string> = {};
-      if (config.apiKey && !config.apiKey.includes('...')) {
+      if (config.apiKey && !config.apiKey.includes('...') && !/^\*+$/.test(config.apiKey)) {
         update.OPENAI_API_KEY = config.apiKey;
+        update.AQR_LLM_API_KEY = config.apiKey;
       }
       if (config.apiUrl) update.OPENAI_BASE_URL = config.apiUrl;
+      if (config.apiUrl) update.AQR_LLM_BASE_URL = config.apiUrl;
+      update.AQR_LLM_PROTOCOL = config.apiProtocol;
       if (config.modelName) {
         update.CHAT_MODEL = config.modelName;
         update.REASONING_MODEL = config.modelName;
+        update.AQR_LLM_MODEL = config.modelName;
       }
       if (config.qlibDataPath) update.QLIB_DATA_DIR = config.qlibDataPath;
       if (config.resultsDir) update.DATA_RESULTS_DIR = config.resultsDir;
@@ -158,7 +166,9 @@ export const SettingsPage: React.FC = () => {
         await updateSystemConfig(update);
       }
     } catch (err: any) {
-      console.warn('Failed to save to backend, saved locally:', err);
+      setError(err.message || '服务端保存失败；未保存密钥。');
+      setIsSaving(false);
+      return;
     }
 
     setIsSaved(true);
@@ -272,6 +282,12 @@ export const SettingsPage: React.FC = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              <label className="block text-sm font-medium">API 协议
+                <select aria-label="API 协议" value={config.apiProtocol} onChange={e => updateConfigField('apiProtocol', e.target.value)} className="mt-2 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm">
+                  <option value="anthropic">Anthropic Messages · StepFun Step Plan</option>
+                  <option value="openai">OpenAI Chat Completions 兼容接口</option>
+                </select>
+              </label>
               <div>
                 <label className="block text-sm font-medium mb-2">
                   API Key <span className="text-destructive">*</span>
@@ -293,7 +309,7 @@ export const SettingsPage: React.FC = () => {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  支持 OpenAI 兼容格式的 API Key（如 DashScope, DeepSeek 等）
+                  密钥不会保存在浏览器缓存中；云端推荐使用安全环境设置绑定。
                 </p>
               </div>
 
@@ -313,19 +329,10 @@ export const SettingsPage: React.FC = () => {
 
               <div>
                 <label className="block text-sm font-medium mb-2">模型名称</label>
-                <select
-                  value={config.modelName}
-                  onChange={(e) => updateConfigField('modelName', e.target.value)}
-                  className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
-                >
-                  <option value="deepseek-v3">DeepSeek V3</option>
-                  <option value="deepseek-r1">DeepSeek R1</option>
-                  <option value="qwen-max">Qwen Max</option>
-                  <option value="qwen-plus">Qwen Plus</option>
-                  <option value="gpt-4">GPT-4</option>
-                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                  <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                </select>
+                <input aria-label="模型名称" list="research-model-options" value={config.modelName}
+                  onChange={e => updateConfigField('modelName', e.target.value)}
+                  className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm" />
+                <datalist id="research-model-options"><option value="step-5-preview" /><option value="gpt-4o-mini" /><option value="deepseek-chat" /><option value="qwen-max" /></datalist>
               </div>
 
               {/* Connection Status */}

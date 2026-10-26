@@ -1,3 +1,126 @@
+# Agentic Quant Research Platform
+
+智能体驱动的量化研究平台。在 **[QuantaAlpha](https://github.com/QuantaAlpha/QuantaAlpha)** 的现有工程上增量开发，保留其因子挖掘、轨迹进化、Qlib 回测和 React 工作台，加入经济性失败记忆、严格样本外协议、等预算消融与可复现实验管理。
+
+> Agent 负责研究规划与提出候选；Qlib / LightGBM 负责训练、执行和验证。当前交付面向单用户、日频离线研究。
+
+## 已有基础与新增部分
+
+| 部分 | 实现来源 |
+| --- | --- |
+| LLM 因子挖掘、表达式计算、进化、因子库 | 保留 QuantaAlpha / RD-Agent 原有实现 |
+| 因子计算、数据集、模型、日频组合回测 | 复用 Qlib；未重写回测／撮合基座 |
+| React / TypeScript 工作台与 FastAPI | 在上游界面和 API 中增量接入 |
+| 经济性失败记忆与上下文检索 | 新增 `quantaalpha/research/memory.py` 和上游类路径钩子 |
+| 四窗口、标签 purge、候选冻结、单次最终评估 | 新增协议和数据库状态机 |
+| 等预算对照、数据／配置指纹、证据包 | 新增实验治理与研究工作台 |
+| PostgreSQL 与 Redis/RQ | 使用 SQLAlchemy 和 RQ 现有基础设施，支持独立 Worker |
+
+来源提交为 `b7ceb27b1001261d7a95b209a963664ae1f8ab23`，归属及创新边界见 [UPSTREAM_AND_INNOVATION.md](docs/UPSTREAM_AND_INNOVATION.md)。底部保留上游原始说明与引用。
+
+## 快速开始
+
+需要 Linux、Python 3.12、Node.js 20+；安装脚本使用官方 CPU PyTorch wheel，避免下载 CUDA 依赖。
+
+```bash
+bash scripts/setup.sh
+bash scripts/start.sh
+```
+
+服务默认使用 8000 端口，同源提供编译后的工作台与 API。启动后从工作台「研究协议」页发起本地演示；开发前端可在 `frontend-v2` 目录运行 `npm run dev`，使用原有 Vite 代理。
+
+当前云环境的虚拟环境保留在仓库外，启动命令为：
+
+```bash
+AQR_VENV=/workspace/agent-dev/.venv bash scripts/start.sh
+```
+
+无需密钥或市场数据账号的 CLI 演示：
+
+```bash
+source .venv/bin/activate
+python -m quantaalpha.research.cli demo --budget 2 --ablation --finalize
+```
+
+该命令准备 **12 个合成资产、540 个工作日** 的本地 Qlib provider，调用原 `BacktestRunner` 完成真实的因子计算、LightGBM 训练与组合回测。候选由明确标记的确定性策略提出；不会假装调用过 LLM，也不会生成随机收益曲线。合成行情用于工程验收，不作为真实市场盈利证据。
+
+## 真实模型与真实数据
+
+当前模型配置为 **StepFun Step Plan / step-5-preview**，使用截图所示的 **Anthropic Messages** 协议；同时保留 OpenAI 兼容协议。云端密钥应填入环境设置，本地开发可复制 `.env.example` 后配置：
+
+```dotenv
+AQR_LLM_API_KEY=
+AQR_LLM_PROTOCOL=anthropic
+AQR_LLM_BASE_URL=https://api.stepfun.com/step_plan
+AQR_LLM_MODEL=step-5-preview
+AQR_LLM_AUTH_MODE=api_key
+```
+
+Step Plan 地址不是 OpenAI Chat Completions 地址，不应强行改成 `/v1/chat/completions`。若服务端要求 Bearer 令牌，可将 `AQR_LLM_AUTH_MODE` 设为 `bearer`；协议测试已覆盖两种认证头。切换 OpenAI 兼容接口时，将 `AQR_LLM_PROTOCOL=openai` 并填写对应地址和模型名。`AQR_*` 会映射到上游客户端所用的 `OPENAI_API_KEY / OPENAI_BASE_URL / CHAT_MODEL / REASONING_MODEL`；模型调用仍复用 QuantaAlpha `APIBackend`，Anthropic 模式通过新增传输适配器接入官方 SDK。研究页中的 LLM 规划器生成受约束、可验证的因子组合与策略参数，原「因子挖掘」页面保留完整的假设／因子代码生成流程。
+
+接入真实数据时使用已有 Qlib provider 和上游回测 YAML：
+
+1. 运行 `python -m quantaalpha.research.cli fingerprint /absolute/path/to/qlib/provider` 获取实际数据指纹。
+2. 参考 [研究协议示例](configs/research_protocol.example.json)，填写实际四窗口、配置文件绝对路径和 provider 交易日历。
+3. 在工作台导入协议 JSON，先研究验证，再冻结一个候选，最后评估一次 holdout。
+4. 原因子挖掘接入失败记忆的类路径配置见 [RESEARCH_PROTOCOL.md](docs/RESEARCH_PROTOCOL.md)。
+
+真实 LLM 调用需要有效绑定；没有配置时会明确拒绝，不会静默切回演示。尚未独立验证真实提供商或真实市场数据的研究效果。
+
+## 样本外协议
+
+```text
+train → purge → tune → purge → research_validation → purge → sealed_holdout
+```
+
+模型只使用 train / tune 拟合与早停。研究候选和失败记忆仅使用 research_validation。默认前瞻标签跨度为 2 个交易日，窗口间剔除至少 2 个交易日；更长标签必须增加 gap。最终评估前冻结候选，校验数据、基础配置、成本和种子指纹；数据库原子领取拒绝重复评估及重复队列投递。holdout 结果不会回流记忆。
+
+这一封存属于应用层研究纪律，不限制拥有数据与代码权限的人自行读取文件。上游独立回测页保留为探索工具，正式最终结论使用研究协议页。
+
+## 持久化与分布式模式
+
+默认 SQLite + 本地线程，无外部服务依赖。配置 `AQR_DATABASE_URL` 后使用 PostgreSQL，配置 `AQR_REDIS_URL` 后使用 Redis/RQ；队列不可用会明确失败，不静默改用其他执行方式。
+
+```bash
+export AQR_DATABASE_URL=postgresql+psycopg://aqr@postgres:5432/aqr
+export AQR_REDIS_URL=redis://redis:6379/0
+docker compose --profile distributed up --build
+```
+
+默认容器化本地模式：`docker compose up --build app`。分布式模式需在首次启动时等待数据库初始化；同一研究产物卷供 API 和 Worker 使用。Compose 的数据库信任认证仅用于隔离的本地开发网络，不发布数据库或 Redis 端口。
+
+## 验证
+
+```bash
+python -m pytest -q tests
+npm run build --prefix frontend-v2
+docker compose config --quiet
+```
+
+浏览器验收会提交真实 Qlib 研究、运行消融、冻结并最终评估，再验证导出与移动端：
+
+```bash
+python scripts/verify_browser.py
+```
+
+在需要机构代理 CA 的网络中，镜像构建支持 BuildKit 的 `proxy_ca` secret 挂载 CA bundle；保留 TLS 校验，不使用跳过验证参数。
+
+已运行的 PostgreSQL 与 Redis 服务可用 `python scripts/verify_distributed.py` 验证完整队列链路，连接通过上述环境变量提供。完整结果与区别于真实市场验证的边界见 [VALIDATION.md](docs/VALIDATION.md)。
+
+## 文档
+
+- [架构](docs/ARCHITECTURE.md)
+- [研究协议](docs/RESEARCH_PROTOCOL.md)
+- [上游与创新增量](docs/UPSTREAM_AND_INNOVATION.md)
+- [验收记录](docs/VALIDATION.md)
+
+当前演示执行 Qlib / LightGBM CPU 路线；PyTorch 依赖与上游模型生态保留。C++ 高频撮合、实盘网关及多用户部署是后续独立模块，未混入 LLM 研究的低延迟执行路径。
+
+---
+
+<details>
+<summary>QuantaAlpha 上游原始说明、论文引用与致谢（保留）</summary>
+
 <div align="center">
   <img src="docs/images/overview.jpg" alt="QuantaAlpha 框架概览" width="90%" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin: 10px 0;"/>
 </div>
@@ -367,3 +490,5 @@ bash start.sh
 
 
 </div>
+
+</details>

@@ -1,14 +1,8 @@
 import React from 'react';
-import {
-  AreaChart,
-  Area,
-  ResponsiveContainer,
-} from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/HoverCard";
 import { RealtimeMetrics } from '@/types';
 import { formatNumber, formatPercent } from '@/utils';
-import { TrendingUp } from 'lucide-react';
 
 interface FactorListProps {
   metrics: RealtimeMetrics | null;
@@ -21,7 +15,7 @@ export const FactorList: React.FC<FactorListProps> = ({ metrics }) => {
   };
 
   const formatMetric = (value: number | undefined | null, type: 'number' | 'percent' = 'number') => {
-    if (value === undefined || value === null || value === 0) return <span className="text-muted-foreground/50">N/A</span>;
+    if (value === undefined || value === null) return <span className="text-muted-foreground/50">N/A</span>;
     return type === 'percent' ? formatPercent(value) : formatNumber(value, 4);
   };
 

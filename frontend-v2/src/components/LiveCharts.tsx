@@ -14,10 +14,7 @@ interface LiveChartsProps {
 }
 
 export const LiveCharts: React.FC<LiveChartsProps> = ({
-  equityCurve,
-  drawdownCurve,
   metrics,
-  isRunning,
   logs,
 }) => {
   const logContainerRef = useRef<HTMLDivElement>(null);

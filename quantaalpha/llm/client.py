@@ -7,7 +7,6 @@ import os
 import random
 import re
 import sqlite3
-import ssl
 import time
 import urllib.request
 import uuid
@@ -348,6 +347,16 @@ class APIBackend:
         use_embedding_cache: bool | None = None,
         dump_embedding_cache: bool | None = None,
     ) -> None:
+        if os.getenv("AQR_LLM_PROTOCOL", "openai") == "anthropic":
+            from quantaalpha.research.anthropic_transport import AnthropicMessagesTransport
+            self._anthropic_transport = AnthropicMessagesTransport()
+            self.chat_model = chat_model or os.getenv("AQR_LLM_MODEL") or LLM_SETTINGS.chat_model
+            self.reasoning_model = reasoning_model or LLM_SETTINGS.reasoning_model or self.chat_model
+            self.retry_wait_seconds = LLM_SETTINGS.retry_wait_seconds
+            self.use_chat_cache = self.dump_chat_cache = False
+            self.use_embedding_cache = self.dump_embedding_cache = False
+            self.use_llama2 = self.use_gcr_endpoint = False
+            return
         if LLM_SETTINGS.use_llama2:
             self.generator = Llama.build(
                 ckpt_dir=LLM_SETTINGS.llama2_ckpt_dir,
@@ -389,8 +398,6 @@ class APIBackend:
             self.gcr_endpoint_top_p = LLM_SETTINGS.gcr_endpoint_top_p
             self.gcr_endpoint_do_sample = LLM_SETTINGS.gcr_endpoint_do_sample
             self.gcr_endpoint_max_token = LLM_SETTINGS.gcr_endpoint_max_token
-            if not os.environ.get("PYTHONHTTPSVERIFY", "") and hasattr(ssl, "_create_unverified_context"):
-                ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
             self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
             self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
             self.encoder = None
@@ -608,6 +615,8 @@ class APIBackend:
         )
 
     def create_embedding(self, input_content: str | list[str], **kwargs: Any) -> list[Any] | Any:
+        if getattr(self, "_anthropic_transport", None) is not None:
+            raise ValueError("Anthropic Messages has no embedding endpoint; configure a separate embedding provider")
         input_content_list = [input_content] if isinstance(input_content, str) else input_content
         resp = self._try_create_chat_completion_or_embedding(
             input_content_list=input_content_list,
@@ -765,6 +774,14 @@ class APIBackend:
             To make retries useful, we need to enable a seed.
             This seed is different from `self.chat_seed` for GPT. It is for the local cache mechanism enabled by QuantaAlpha locally.
         """
+        if getattr(self, "_anthropic_transport", None) is not None:
+            return self._anthropic_transport.complete(
+                messages=messages,
+                model=self.reasoning_model if reasoning_flag else self.chat_model,
+                max_tokens=max_tokens or LLM_SETTINGS.chat_max_tokens,
+                temperature=LLM_SETTINGS.chat_temperature if temperature is None else temperature,
+                json_mode=json_mode,
+            )
         if seed is None and LLM_SETTINGS.use_auto_chat_cache_seed_gen:
             seed = LLM_CACHE_SEED_GEN.get_next_seed()
 

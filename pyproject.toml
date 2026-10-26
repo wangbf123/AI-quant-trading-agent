@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
 ]
-description = "QuantaAlpha - LLM-Driven Alpha Factor Mining Agent"
+description = "Agentic Quant Research Platform: QuantaAlpha-based research with economic failure memory, sealed out-of-sample evaluation, and reproducible experiments"
 dynamic = [
   "dependencies",
   "optional-dependencies",
@@ -34,19 +34,24 @@ requires-python = ">=3.10"
 
 [project.scripts]
 quantaalpha = "quantaalpha.cli:app"
+aqr = "quantaalpha.research.cli:main"
 
 [project.urls]
 homepage = "https://github.com/QuantaAlpha/quantaalpha"
 issue = "https://github.com/QuantaAlpha/quantaalpha/issues"
 
 [tool.setuptools]
-packages = {find = {where = ["."]}}
+packages = {find = {where = ["."], include = ["quantaalpha*"]}}
+
+[tool.setuptools.package-data]
+quantaalpha = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.txt", "**/*.md", "**/*.j2", "**/*.sh", "**/Dockerfile"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.dynamic.optional-dependencies]
 docs = {file = ["requirements/docs.txt"]}
+research = {file = ["requirements/research-extra.txt"]}
 
 [tool.setuptools_scm]
 local_scheme = "no-local-version"

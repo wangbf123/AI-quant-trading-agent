@@ -19,6 +19,9 @@ if _env_path.exists():
 else:
     load_dotenv(".env")
 
+from quantaalpha.research.llm_config import configure_upstream_environment
+configure_upstream_environment()
+
 import fire
 from quantaalpha.pipeline.factor_mining import main as mine
 from quantaalpha.pipeline.factor_backtest import main as backtest

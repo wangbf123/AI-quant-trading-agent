@@ -33,7 +33,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { formatDate, formatNumber, formatPercent } from '@/utils';
+import { formatDate, formatPercent } from '@/utils';
 
 // ... (existing MetricCard component)
 
@@ -114,18 +114,6 @@ const CumulativeReturnChart: React.FC<{ data: { date: string; value: number }[] 
 import { useTaskContext } from '@/context/TaskContext';
 
 // ========================== Component ==========================
-
-// Helper component for metrics
-const MetricCard = ({ label, value, unit = '' }: { label: string; value?: number; unit?: string }) => (
-  <div className="bg-secondary/30 rounded-lg p-3">
-    <div className="text-xs text-muted-foreground mb-1">{label}</div>
-    <div className="text-lg font-bold font-mono">
-      {typeof value === 'number' 
-        ? `${formatNumber(value, 4)}${unit}`
-        : '--'}
-    </div>
-  </div>
-);
 
 export const BacktestPage: React.FC = () => {
   const {
@@ -278,7 +266,7 @@ export const BacktestPage: React.FC = () => {
           独立回测
         </h1>
         <p className="text-muted-foreground mt-1">
-          使用因子库进行全周期回测评估
+          沿用 QuantaAlpha 的独立探索回测；正式封存评估请使用「研究协议」。
         </p>
       </div>
 
@@ -289,8 +277,8 @@ export const BacktestPage: React.FC = () => {
             <Info className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
             <div className="text-sm space-y-1">
               <p className="text-muted-foreground">
-                独立回测在<strong className="text-foreground">测试集（2022-01-01 ~ 2025-12-26）</strong>上评估因子的样本外表现。
-                使用 CSI300 市场股票池，TopK Dropout 策略，LightGBM 模型。
+                时间窗口、市场与成本取自实际回测配置。本页面允许独立探索，不纳入新研究协议的一次性封存状态机。
+                最终样本外结论应来自「研究协议」中的冻结候选和单次最终评估。
               </p>
               <p className="text-muted-foreground">
                 <strong className="text-foreground">custom</strong> 模式仅使用因子库中的自定义因子；

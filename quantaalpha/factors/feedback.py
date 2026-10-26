@@ -24,100 +24,57 @@ DIRNAME = Path(__file__).absolute().resolve().parent
 
 
 def process_results(current_result, sota_result):
-    # Convert the results to dataframes
-    current_df = pd.DataFrame(current_result)
-    
-    # Handle case where sota_result might be None or empty
-    if sota_result is None or (isinstance(sota_result, pd.DataFrame) and sota_result.empty):
-        # If no SOTA result, return only current result
-        current_df.index.name = "metric"
-        if "0" in current_df.columns:
-            current_df.rename(columns={"0": "Current Result"}, inplace=True)
-        elif len(current_df.columns) > 0:
-            # Use first column if "0" doesn't exist
-            first_col = current_df.columns[0]
-            current_df.rename(columns={first_col: "Current Result"}, inplace=True)
-        
-        # Select important metrics for comparison
-        important_metrics = [
-            "1day.excess_return_without_cost.max_drawdown",
-            "1day.excess_return_without_cost.information_ratio",
-            "1day.excess_return_without_cost.annualized_return",
-            "IC",
-        ]
-        
-        # Filter the DataFrame to retain only the important metrics that exist
-        available_metrics = [m for m in important_metrics if m in current_df.index]
-        if available_metrics:
-            filtered_df = current_df.loc[available_metrics]
+    """Present explicitly named net metrics before gross diagnostics.
+
+    Qlib emits both variants. Missing net metrics remain missing: gross returns
+    must never be relabelled as performance after transaction costs.
+    """
+    def result_frame(value, column):
+        if value is None:
+            return pd.DataFrame(columns=[column])
+        if isinstance(value, pd.Series):
+            frame = value.to_frame()
+        elif isinstance(value, dict) and all(
+            not isinstance(item, (dict, list, tuple, pd.Series))
+            for item in value.values()
+        ):
+            frame = pd.Series(value, dtype=object).to_frame()
         else:
-            filtered_df = current_df
-        
-        return filtered_df.to_string()
-    
-    sota_df = pd.DataFrame(sota_result)
+            frame = pd.DataFrame(value).copy()
+        if frame.shape[1] == 0:
+            return pd.DataFrame(columns=[column])
+        frame = frame.iloc[:, :1]
+        frame.columns = [column]
+        frame.index.name = "metric"
+        return frame
 
-    # Set the metric as the index
-    current_df.index.name = "metric"
-    sota_df.index.name = "metric"
-
-    # Rename the value column to reflect the result type
-    # Handle case where column "0" might not exist
-    if "0" in current_df.columns:
-        current_df.rename(columns={"0": "Current Result"}, inplace=True)
-    elif len(current_df.columns) > 0:
-        first_col = current_df.columns[0]
-        current_df.rename(columns={first_col: "Current Result"}, inplace=True)
-    else:
-        # If no columns, create a dummy column
-        current_df["Current Result"] = 0
-    
-    if "0" in sota_df.columns:
-        sota_df.rename(columns={"0": "SOTA Result"}, inplace=True)
-    elif len(sota_df.columns) > 0:
-        first_col = sota_df.columns[0]
-        sota_df.rename(columns={first_col: "SOTA Result"}, inplace=True)
-    else:
-        # If no columns, create a dummy column
-        sota_df["SOTA Result"] = 0
-
-    # Combine the dataframes on the Metric index
-    combined_df = pd.concat([current_df, sota_df], axis=1)
-
-    # Select important metrics for comparison
-    important_metrics = [
-        "1day.excess_return_without_cost.max_drawdown",
-        "1day.excess_return_without_cost.information_ratio",
-        "1day.excess_return_without_cost.annualized_return",
-        "IC",
-    ]
-
-    # Filter the combined DataFrame to retain only the important metrics that exist
-    available_metrics = [m for m in important_metrics if m in combined_df.index]
-    if available_metrics:
-        filtered_combined_df = combined_df.loc[available_metrics]
-    else:
-        filtered_combined_df = combined_df
-
-    # Check if both columns exist before comparing
-    if "Current Result" in filtered_combined_df.columns and "SOTA Result" in filtered_combined_df.columns:
-        filtered_combined_df[
-            "Bigger columns name (Didn't consider the direction of the metric, you should judge it by yourself that bigger is better or smaller is better)"
-        ] = filtered_combined_df.apply(
-                lambda row: "Current Result" if pd.notna(row["Current Result"]) and pd.notna(row["SOTA Result"]) and row["Current Result"] > row["SOTA Result"] else "SOTA Result", axis=1
+    combined = pd.concat([
+        result_frame(current_result, "Current Result"),
+        result_frame(sota_result, "SOTA Result"),
+    ], axis=1)
+    metric_names = ["annualized_return", "information_ratio", "max_drawdown"]
+    net_names = [f"1day.excess_return_with_cost.{name}" for name in metric_names]
+    gross_names = [f"1day.excess_return_without_cost.{name}" for name in metric_names]
+    ordered = [name for name in net_names + gross_names + ["IC", "Rank IC"]
+               if name in combined.index]
+    if ordered:
+        combined = combined.loc[ordered].copy()
+    gross_annual = "1day.excess_return_without_cost.annualized_return"
+    net_annual = "1day.excess_return_with_cost.annualized_return"
+    if gross_annual in combined.index and net_annual in combined.index:
+        combined.loc["transaction_cost_annualized_return_drag"] = (
+            pd.to_numeric(combined.loc[gross_annual], errors="coerce")
+            - pd.to_numeric(combined.loc[net_annual], errors="coerce")
         )
-    elif "Current Result" in filtered_combined_df.columns:
-        # Only current result available
-        filtered_combined_df[
-            "Bigger columns name (Didn't consider the direction of the metric, you should judge it by yourself that bigger is better or smaller is better)"
-        ] = "Current Result"
-    elif "SOTA Result" in filtered_combined_df.columns:
-        # Only SOTA result available
-        filtered_combined_df[
-            "Bigger columns name (Didn't consider the direction of the metric, you should judge it by yourself that bigger is better or smaller is better)"
-        ] = "SOTA Result"
-
-    return filtered_combined_df.to_string()
+    has_net = all(name in combined.index for name in net_names)
+    if has_net:
+        current_net = pd.to_numeric(combined.loc[net_names, "Current Result"], errors="coerce")
+        has_net = current_net.replace([float("inf"), float("-inf")], float("nan")).notna().all()
+    status = ("Net (with-cost) metrics are the selection criterion. Gross metrics "
+              "are diagnostic only." if has_net else
+              "NET METRICS INCOMPLETE: economic acceptance cannot be established; "
+              "gross metrics are diagnostic only and must not substitute for net.")
+    return status + "\n" + combined.to_string()
 
 
 class QlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):

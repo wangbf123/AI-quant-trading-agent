@@ -21,6 +21,10 @@ sys.path.insert(0, str(project_root))
 logger = logging.getLogger(__name__)
 
 
+class BacktestIntegrityError(RuntimeError):
+    """A run did not produce a valid, cost-aware portfolio backtest."""
+
+
 class BacktestRunner:
     """Backtest executor."""
 
@@ -47,7 +51,15 @@ class BacktestRunner:
         )
         provider_uri = os.path.expanduser(provider_uri)
         region = self.config['data'].get('region', 'cn')
-        qlib.init(provider_uri=provider_uri, region=region)
+        init_options = {"kernels": self.config["data"].get("kernels", 2)}
+        if self.config.get("research_protocol"):
+            record_dir = Path(self.config["experiment"]["output_dir"]).resolve()
+            record_dir.mkdir(parents=True, exist_ok=True)
+            init_options["exp_manager"] = {
+                "class": "MLflowExpManager", "module_path": "qlib.workflow.expm",
+                "kwargs": {"uri": f"sqlite:///{record_dir / 'mlflow.sqlite3'}", "default_exp_name": "Research"},
+            }
+        qlib.init(provider_uri=provider_uri, region=region, **init_options)
         self._qlib_initialized = True
         logger.info(f"Qlib initialized: {provider_uri} (region={region})")
 
@@ -60,6 +72,16 @@ class BacktestRunner:
         """Run full backtest; returns metrics dict."""
         start_time_total = time.time()
         self._init_qlib()
+        if self.config.get("research_protocol"):
+            from qlib.data import D
+            from quantaalpha.research.protocol import validate_execution_calendar
+            trading_days = D.calendar(
+                start_time=self.config["data"]["start_time"],
+                end_time=self.config["data"]["end_time"], freq="day",
+            )
+            validate_execution_calendar(
+                self.config, [pd.Timestamp(day).date().isoformat() for day in trading_days],
+            )
         if factor_source:
             self.config['factor_source']['type'] = factor_source
         if factor_json:
@@ -91,6 +113,7 @@ class BacktestRunner:
         print("[3/4] Dataset created")
 
         metrics = self._train_and_backtest(dataset, exp_name, rec_name, output_name=output_name)
+        self._require_portfolio_metrics(metrics)
         total_time = time.time() - start_time_total
         self._print_results(metrics, total_time)
         self._save_results(metrics, exp_name, factor_source or self.config['factor_source']['type'], 
@@ -99,6 +122,29 @@ class BacktestRunner:
         
         return metrics
     
+    @staticmethod
+    def _validate_predictions(pred):
+        if pred is None or not isinstance(pred, (pd.Series, pd.DataFrame)) or pred.empty:
+            raise BacktestIntegrityError("Model produced empty predictions; no backtest was completed")
+        try:
+            values = pred.to_numpy(dtype=float)
+        except (TypeError, ValueError) as error:
+            raise BacktestIntegrityError("Predictions must contain numerical signals") from error
+        if not np.isfinite(values).any() or np.isinf(values).any():
+            raise BacktestIntegrityError("Model predictions contain no finite usable signals")
+
+    @staticmethod
+    def _require_portfolio_metrics(metrics):
+        required = ("annualized_return", "information_ratio", "max_drawdown")
+        missing = [name for name in required if name not in metrics]
+        if missing:
+            raise BacktestIntegrityError(
+                "Portfolio backtest incomplete; missing cost-aware metrics: " + ", ".join(missing)
+            )
+        if any(not isinstance(metrics[name], (int, float, np.number))
+               or not np.isfinite(metrics[name]) for name in required):
+            raise BacktestIntegrityError("Portfolio backtest produced non-finite cost-aware metrics")
+
     def _load_factors(self) -> Tuple[Dict[str, str], List[Dict]]:
         from .factor_loader import FactorLoader
         
@@ -505,6 +551,7 @@ class BacktestRunner:
             
             # Generate prediction
             pred = model.predict(dataset)
+            self._validate_predictions(pred)
             logger.debug(f"  Pred shape: {pred.shape}")
             
             # Save prediction
@@ -582,6 +629,17 @@ class BacktestRunner:
                 except Exception as filter_err:
                     logger.warning(f"Price filter failed: {filter_err}")
                 
+                self._validate_predictions(pred)
+                # YAML/JSON arrays map to the tuple-based public Qlib API.
+                exchange_options = dict(backtest_config['exchange_kwargs'])
+                volume_limit = exchange_options.get('volume_threshold')
+                if isinstance(volume_limit, list):
+                    exchange_options['volume_threshold'] = tuple(volume_limit)
+                elif isinstance(volume_limit, dict):
+                    exchange_options['volume_threshold'] = {
+                        key: tuple(value) if isinstance(value, list) else value
+                        for key, value in volume_limit.items()
+                    }
                 portfolio_metric_dict, indicator_dict = qlib_backtest(
                     executor={
                         "class": "SimulatorExecutor",
@@ -608,23 +666,37 @@ class BacktestRunner:
                     benchmark=backtest_config['benchmark'],
                     exchange_kwargs={
                         "codes": stock_list,
-                        **backtest_config['exchange_kwargs']
+                        **exchange_options
                     }
                 )
                 
                 print(f"  Portfolio backtest done ({time.time()-bt_start:.1f}s)")
-                # Extract portfolio metrics
-                if portfolio_metric_dict and "1day" in portfolio_metric_dict:
-                    report_df, positions_df = portfolio_metric_dict["1day"]
-                    
-                    if isinstance(report_df, pd.DataFrame) and 'return' in report_df.columns:
-                        portfolio_return = report_df['return'].replace([np.inf, -np.inf], np.nan).fillna(0)
-                        bench_return = report_df['bench'].replace([np.inf, -np.inf], np.nan).fillna(0) if 'bench' in report_df.columns else 0
-                        cost = report_df['cost'].replace([np.inf, -np.inf], np.nan).fillna(0) if 'cost' in report_df.columns else 0
-                        
-                        excess_return_with_cost = portfolio_return - bench_return - cost
-                        excess_return_with_cost = excess_return_with_cost.dropna()
-                        
+                # Treat absent/invalid reports as failures, never as an IC-only success.
+                if not portfolio_metric_dict or "1day" not in portfolio_metric_dict:
+                    raise BacktestIntegrityError("Qlib returned no daily portfolio report")
+                report_df, positions_df = portfolio_metric_dict["1day"]
+                required_columns = {"return", "bench", "cost"}
+                if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+                    raise BacktestIntegrityError("Qlib returned an empty portfolio report")
+                if not required_columns.issubset(report_df.columns):
+                    raise BacktestIntegrityError("Portfolio report must include return, bench, and explicit cost")
+                report_values = report_df[["return", "bench", "cost"]].apply(pd.to_numeric, errors="raise")
+                if not np.isfinite(report_values.to_numpy(dtype=float)).all():
+                    raise BacktestIntegrityError("Portfolio report contains non-finite returns or costs")
+                if (report_values["cost"] < 0).any():
+                    raise BacktestIntegrityError("Portfolio report contains negative transaction costs")
+                if isinstance(report_df, pd.DataFrame):
+                    if 'return' in report_df.columns:
+                        portfolio_return = report_values['return']
+                        bench_return = report_values['bench']
+                        cost = report_values['cost']
+                        excess_return_without_cost = portfolio_return - bench_return
+                        excess_return_with_cost = excess_return_without_cost - cost
+                        metrics['mean_daily_cost'] = float(cost.mean())
+                        metrics['total_cost_rate'] = float(cost.sum())
+                        if 'turnover' in report_df:
+                            metrics['mean_daily_turnover'] = float(report_df['turnover'].mean())
+
                         if len(excess_return_with_cost) > 0:
                             try:
                                 daily_df = report_df.copy()
@@ -638,13 +710,27 @@ class BacktestRunner:
                                 save_df = daily_df[['excess_return']].copy()
                                 save_df.columns = ['daily_excess_return']
                                 save_df['cumulative_excess_return'] = save_df['daily_excess_return'].cumsum()
+                                save_df['net_return'] = portfolio_return - cost
+                                save_df['benchmark_return'] = bench_return
+                                save_df['gross_return'] = portfolio_return
+                                save_df['cost'] = cost
+                                save_df['equity'] = (1 + save_df['net_return']).cumprod()
+                                save_df['benchmark'] = (1 + save_df['benchmark_return']).cumprod()
+                                save_df['drawdown'] = save_df['equity'] / save_df['equity'].cummax() - 1
                                 
                                 save_df.index.name = 'date'
                                 save_df.to_csv(csv_path)
                                 logger.debug(f"  Daily excess return saved: {csv_path}")
                             except Exception as csv_err:
-                                logger.warning(f"Failed to save daily CSV: {csv_err}")
+                                raise BacktestIntegrityError(f"Failed to persist portfolio evidence: {csv_err}") from csv_err
 
+                            gross_analysis = risk_analysis(excess_return_without_cost)
+                            if isinstance(gross_analysis, pd.DataFrame):
+                                gross_analysis = (gross_analysis['risk'] if 'risk' in gross_analysis.columns
+                                                  else gross_analysis.iloc[:, 0])
+                            gross_return = float(gross_analysis.get('annualized_return', float('nan')))
+                            if np.isfinite(gross_return):
+                                metrics['gross_annualized_return'] = gross_return
                             analysis = risk_analysis(excess_return_with_cost)
                             
                             if isinstance(analysis, pd.DataFrame):
@@ -656,6 +742,9 @@ class BacktestRunner:
                             
                             if not np.isnan(ann_ret) and not np.isinf(ann_ret):
                                 metrics['annualized_return'] = ann_ret
+                                metrics['net_annualized_return'] = ann_ret
+                                if 'gross_annualized_return' in metrics:
+                                    metrics['transaction_cost_annualized_drag'] = metrics['gross_annualized_return'] - ann_ret
                             if not np.isnan(info_ratio) and not np.isinf(info_ratio):
                                 metrics['information_ratio'] = info_ratio
                             if not np.isnan(max_dd) and not np.isinf(max_dd):
@@ -667,10 +756,12 @@ class BacktestRunner:
                                     metrics['calmar_ratio'] = calmar
                             
             except Exception as e:
-                logger.warning(f"Portfolio backtest failed: {e}")
-                import traceback
-                traceback.print_exc()
-        
+                logger.exception("Portfolio backtest failed")
+                if isinstance(e, BacktestIntegrityError):
+                    raise
+                raise BacktestIntegrityError(f"Portfolio backtest failed: {e}") from e
+
+        self._require_portfolio_metrics(metrics)
         return metrics
     
     def _print_results(self, metrics: Dict, total_time: float):

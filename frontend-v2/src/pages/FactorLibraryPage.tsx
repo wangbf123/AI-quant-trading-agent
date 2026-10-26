@@ -45,6 +45,7 @@ export const FactorLibraryPage: React.FC = () => {
         library: selectedLibrary || undefined,
         limit: 500,
       });
+      if (!resp.success || !resp.data) throw new Error(resp.error || '无法读取因子库');
       if (resp.success && resp.data) {
         const apiFactors: Factor[] = resp.data.factors.map((f: any) => {
           const bt = f.backtestResults || {};
@@ -77,27 +78,12 @@ export const FactorLibraryPage: React.FC = () => {
     } catch (err: any) {
       console.error('Failed to load factors from API:', err);
       setError('无法连接后端服务。请确保后端已启动 (python backend/app.py)');
-      // Fallback to mock data
-      loadMockFactors();
+      setFactors([]);
+      setMetadata(null);
     } finally {
       setIsLoading(false);
     }
   }, [selectedLibrary]);
-
-  const loadMockFactors = () => {
-    const cached = localStorage.getItem('quantaalpha_factors');
-    if (cached) {
-      try {
-        setFactors(JSON.parse(cached));
-      } catch {
-        setFactors(generateMockFactors());
-      }
-    } else {
-      const mock = generateMockFactors();
-      setFactors(mock);
-      localStorage.setItem('quantaalpha_factors', JSON.stringify(mock));
-    }
-  };
 
   const filterFactors = () => {
     let filtered = factors;
@@ -506,27 +492,3 @@ export const FactorLibraryPage: React.FC = () => {
     </div>
   );
 };
-
-// Generate mock factors for demo when backend is unavailable
-function generateMockFactors(): Factor[] {
-  const qualities: FactorQuality[] = ['high', 'medium', 'low'];
-  const directions = ['动量类', '价值类', '成长类', '技术指标'];
-  const factors: Factor[] = [];
-  for (let i = 0; i < 30; i++) {
-    factors.push({
-      factorId: `factor_${i + 1}`,
-      factorName: `Factor_${i + 1}_${directions[i % 4]}`,
-      factorExpression: `RANK(TS_MEAN($close / DELAY($close, ${10 + i}), ${5 + i}) * $volume)`,
-      factorDescription: `这是一个${directions[i % 4]}因子，结合了价格动量和成交量特征`,
-      quality: qualities[i % 3],
-      ic: 0.03 + Math.random() * 0.05,
-      icir: 0.3 + Math.random() * 0.5,
-      rankIc: 0.025 + Math.random() * 0.05,
-      rankIcir: 0.25 + Math.random() * 0.5,
-      round: Math.floor(i / 5) + 1,
-      direction: directions[i % 4],
-      createdAt: new Date(Date.now() - i * 86400000).toISOString(),
-    });
-  }
-  return factors;
-}

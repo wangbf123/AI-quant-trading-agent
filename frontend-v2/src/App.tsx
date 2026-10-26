@@ -4,6 +4,7 @@ import { MiningDashboardPage } from '@/pages/MiningDashboardPage';
 import { FactorLibraryPage } from '@/pages/FactorLibraryPage';
 import { BacktestPage } from '@/pages/BacktestPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { ResearchPage } from '@/pages/ResearchPage';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
 import { ParticleBackground } from '@/components/ParticleBackground';
@@ -11,7 +12,7 @@ import { TaskProvider, useTaskContext } from '@/context/TaskContext';
 
 // Inner component to access context
 const AppContent: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<PageId>('home');
+  const [currentPage, setCurrentPage] = useState<PageId>('research');
   const { miningTask } = useTaskContext();
 
   // Auto-switch to dashboard when task starts
@@ -33,6 +34,11 @@ const AppContent: React.FC = () => {
         Use display:none to hide non-current pages instead of conditional unmounting.
         This ensures that components are not unmounted when switching pages, so WebSocket/task state is not lost.
       */}
+      <div style={{ display: currentPage === 'research' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <ResearchPage />
+        </Layout>
+      </div>
       <div style={{ display: currentPage === 'home' ? 'block' : 'none' }}>
         <HomePage onNavigate={setCurrentPage} />
       </div>

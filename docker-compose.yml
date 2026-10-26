@@ -1,0 +1,66 @@
+name: agentic-quant-research
+services:
+  app:
+    build: .
+    image: agentic-quant-research:local
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment: &research-environment
+      AQR_DATA_DIR: /app/data/research
+      AQR_DATABASE_URL: ${AQR_DATABASE_URL:-sqlite:////app/data/research/research.sqlite3}
+      AQR_REDIS_URL: ${AQR_REDIS_URL:-}
+      AQR_LLM_API_KEY: ${AQR_LLM_API_KEY:-}
+      AQR_LLM_PROTOCOL: ${AQR_LLM_PROTOCOL:-anthropic}
+      AQR_LLM_BASE_URL: ${AQR_LLM_BASE_URL:-https://api.stepfun.com/step_plan}
+      AQR_LLM_MODEL: ${AQR_LLM_MODEL:-step-5-preview}
+      AQR_LLM_AUTH_MODE: ${AQR_LLM_AUTH_MODE:-api_key}
+      LOG_LLM_CHAT_CONTENT: "false"
+    volumes:
+      - research-data:/app/data
+    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    profiles: [distributed]
+    environment:
+      POSTGRES_USER: aqr
+      POSTGRES_DB: aqr
+      # Internal local-development network only; no database port is published.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aqr -d aqr"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    profiles: [distributed]
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  worker:
+    image: agentic-quant-research:local
+    profiles: [distributed]
+    command: [python, -m, quantaalpha.research.jobs]
+    environment:
+      <<: *research-environment
+      AQR_DATABASE_URL: ${AQR_DATABASE_URL:-postgresql+psycopg://aqr@postgres:5432/aqr}
+      AQR_REDIS_URL: ${AQR_REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - research-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  research-data:
+  postgres-data:
+  redis-data:

@@ -1,0 +1,10 @@
+# Additive platform dependencies; the original QuantaAlpha dependencies remain.
+fastapi>=0.109,<1
+uvicorn[standard]>=0.27,<1
+python-multipart>=0.0.6
+websockets>=12
+sqlalchemy>=2.0,<3
+psycopg[binary]>=3.2,<4
+redis>=5,<9
+rq>=2.6,<3
+anthropic>=0.45,<1

@@ -1,0 +1,19 @@
+{
+  "name": "Replace with your versioned Qlib dataset",
+  "dataset_fingerprint": "REPLACE_WITH_CLI_FINGERPRINT",
+  "config_path": "/absolute/path/to/backtest.yaml",
+  "data_root": "/absolute/path/to/research-artifacts",
+  "train": ["2016-01-01", "2019-12-20"],
+  "tune": ["2020-01-02", "2020-12-18"],
+  "validation": ["2021-01-04", "2021-12-17"],
+  "holdout": ["2022-01-04", "2023-12-22"],
+  "purge_sessions": 2,
+  "costs": {
+    "deal_price": "open",
+    "open_cost": 0.0005,
+    "close_cost": 0.0015,
+    "min_cost": 5,
+    "impact_cost": 0.001,
+    "volume_threshold": {"all": ["cum", "Ref($volume, 1) * 0.01"]}
+  }
+}

@@ -31,11 +31,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 DOTENV_PATH = PROJECT_ROOT / ".env"
+from dotenv import load_dotenv
+load_dotenv(DOTENV_PATH)
+from quantaalpha.research.llm_config import configure_upstream_environment
+configure_upstream_environment()
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="QuantaAlpha API", version="2.0.0")
+app = FastAPI(title="Agentic Quant Research Platform", version="0.1.0", description="QuantaAlpha-based research with economic failure memory and sealed out-of-sample evaluation")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +82,10 @@ class SystemConfigUpdate(BaseModel):
     OPENAI_BASE_URL: Optional[str] = None
     CHAT_MODEL: Optional[str] = None
     REASONING_MODEL: Optional[str] = None
+    AQR_LLM_API_KEY: Optional[str] = None
+    AQR_LLM_BASE_URL: Optional[str] = None
+    AQR_LLM_MODEL: Optional[str] = None
+    AQR_LLM_PROTOCOL: Optional[str] = None
 
 
 class ApiResponse(BaseModel):
@@ -453,7 +461,11 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
 
 @app.get("/")
 async def root():
-    return {"message": "QuantaAlpha API", "version": "2.0.0"}
+    index = PROJECT_ROOT / "frontend-v2" / "dist" / "index.html"
+    if index.is_file():
+        from fastapi.responses import FileResponse
+        return FileResponse(index)
+    return {"message": "Agentic Quant Research Platform API", "version": "0.1.0"}
 
 
 @app.get("/api/health")
@@ -772,6 +784,18 @@ async def start_backtest(req: BacktestStartRequest):
     task_id = _gen_id()
     config_path = req.configPath or str(PROJECT_ROOT / "configs" / "backtest.yaml")
 
+    original_path = Path(config_path).expanduser()
+    if not original_path.is_absolute():
+        original_path = PROJECT_ROOT / original_path
+    if not original_path.is_file():
+        raise HTTPException(422, "Backtest configuration does not exist")
+    run_dir = PROJECT_ROOT / "data" / "results" / "standalone" / task_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    local_config = yaml.safe_load(original_path.read_text())
+    local_config.setdefault("experiment", {})["output_dir"] = str(run_dir)
+    effective_config = run_dir / "config.yaml"
+    effective_config.write_text(yaml.safe_dump(local_config, sort_keys=False))
+    config_path = str(effective_config)
     task = {
         "taskId": task_id,
         "status": "running",
@@ -859,6 +883,8 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
                 else:
                     factor_json_path = candidate  # will fail with a clear error message
         factor_json_str = str(factor_json_path)
+        run_dir = Path(config_path).parent
+        task["artifact_metrics"] = str(run_dir / f"{factor_json_path.stem}_backtest_metrics.json")
 
         # --- Find the correct Python executable ---
         # Prefer the conda env that has qlib installed
@@ -1022,57 +1048,29 @@ async def _run_backtest(task_id: str, req: BacktestStartRequest, config_path: st
 
 
 def _load_backtest_results(task: Dict[str, Any]):
-    """Try to load backtest result metrics from the output directory."""
-    try:
-        config_path = task.get("config", {}).get("configPath") or str(
-            PROJECT_ROOT / "configs" / "backtest.yaml"
-        )
-        with open(config_path, "r") as f:
-            bt_config = yaml.safe_load(f)
-        output_dir_raw = bt_config.get("experiment", {}).get(
-            "output_dir", "data/results/backtest_v2_results"
-        )
-        # Resolve relative output_dir against PROJECT_ROOT (run_backtest runs with cwd=PROJECT_ROOT)
-        output_dir = Path(output_dir_raw)
-        if not output_dir.is_absolute():
-            output_dir = PROJECT_ROOT / output_dir
-        output_dir_str = str(output_dir)
-
-        # Look for most recent metrics JSON
-        metrics_files = sorted(
-            glob.glob(os.path.join(output_dir_str, "*_backtest_metrics.json")),
-            key=os.path.getmtime, reverse=True,
-        )
-        if metrics_files:
-            with open(metrics_files[0], "r") as f:
-                metrics_data = json.load(f)
-            # The JSON has a nested structure: { metrics: {...}, config: {...}, ... }
-            # Flatten: put the inner metrics dict at the top level for the frontend,
-            # but also keep meta fields like experiment_name and elapsed_seconds.
-            inner_metrics = metrics_data.get("metrics", {})
-            flat = {**inner_metrics}
-            # Carry over useful metadata
-            for key in ("experiment_name", "factor_source", "num_factors",
-                        "config", "elapsed_seconds"):
-                if key in metrics_data:
-                    flat[f"__{key}"] = metrics_data[key]
-            
-            # Load cumulative excess return data from CSV
-            csv_path = metrics_files[0].replace("_backtest_metrics.json", "_cumulative_excess.csv")
-            if os.path.exists(csv_path):
-                import pandas as pd
-                df = pd.read_csv(csv_path)
-                if 'date' in df.columns and 'cumulative_excess_return' in df.columns:
-                    cumulative_data = df[['date', 'cumulative_excess_return']].to_dict('records')
-                    flat["cumulative_curve"] = [
-                        {"date": r["date"], "value": r["cumulative_excess_return"]} 
-                        for r in cumulative_data
-                    ]
-
-            task["metrics"] = flat
-    except Exception as e:
-        import traceback
-        traceback.print_exc()  # print for debugging, but don't crash
+    """Read only this task's declared artifact; never reuse the newest result."""
+    artifact = task.get("artifact_metrics")
+    if not artifact or not Path(artifact).is_file():
+        raise RuntimeError("Current backtest did not produce its declared metrics artifact")
+    path = Path(artifact)
+    data = json.loads(path.read_text())
+    metrics = data.get("metrics", {})
+    for key in ("annualized_return", "information_ratio", "max_drawdown"):
+        if key not in metrics:
+            raise RuntimeError(f"Current backtest lacks required metric: {key}")
+    flat = dict(metrics)
+    for key in ("experiment_name", "factor_source", "num_factors", "config", "elapsed_seconds"):
+        if key in data:
+            flat[f"__{key}"] = data[key]
+    curve = path.with_name(path.name.replace("_backtest_metrics.json", "_cumulative_excess.csv"))
+    if not curve.is_file():
+        raise RuntimeError("Current backtest did not persist a portfolio curve")
+    import pandas as pd
+    frame = pd.read_csv(curve)
+    if frame.empty:
+        raise RuntimeError("Current backtest portfolio curve is empty")
+    flat["cumulative_curve"] = [{"date": row["date"], "value": row["cumulative_excess_return"]} for row in frame.to_dict("records")]
+    task["metrics"] = flat
 
 
 # ---- System config endpoints ----
@@ -1080,7 +1078,9 @@ def _load_backtest_results(task: Dict[str, Any]):
 @app.get("/api/v1/system/config", response_model=ApiResponse)
 async def get_system_config():
     """Read current system configuration from .env and experiment.yaml."""
-    dotenv = _load_dotenv_dict()
+    available = _load_dotenv_dict()
+    allowed = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CHAT_MODEL", "REASONING_MODEL", "QLIB_DATA_DIR", "DATA_RESULTS_DIR", "AQR_LLM_API_KEY", "AQR_LLM_BASE_URL", "AQR_LLM_MODEL", "AQR_LLM_PROTOCOL")
+    dotenv = {key: os.getenv(key, available.get(key, "")) for key in allowed}
 
     # Read experiment.yaml for display
     exp_yaml_path = PROJECT_ROOT / "configs" / "experiment.yaml"
@@ -1092,7 +1092,7 @@ async def get_system_config():
     masked_env = {}
     for k, v in dotenv.items():
         if "KEY" in k.upper() and v:
-            masked_env[k] = v[:8] + "..." + v[-4:] if len(v) > 12 else "***"
+            masked_env[k] = "********"
         else:
             masked_env[k] = v
 
@@ -1110,21 +1110,28 @@ async def get_system_config():
 async def update_system_config(update: SystemConfigUpdate):
     """Update .env configuration (non-secret fields only)."""
     if not DOTENV_PATH.exists():
-        raise HTTPException(status_code=404, detail=".env file not found")
+        DOTENV_PATH.touch(mode=0o600)
 
     content = DOTENV_PATH.read_text(encoding="utf-8")
     updates = {k: v for k, v in update.model_dump().items() if v is not None}
+    if updates.get("AQR_LLM_PROTOCOL", "openai") not in ("openai", "anthropic"):
+        raise HTTPException(422, "Unsupported model API protocol")
 
     import re
     for key, val in updates.items():
+        if any(character in val for character in ("\n", "\r")):
+            raise HTTPException(422, "Configuration values must be single-line")
+        if "KEY" in key and (not val or set(val) == {"*"}):
+            continue
         # Replace existing line or append
         pattern = rf"^{re.escape(key)}\s*=.*$"
         replacement = f"{key}={val}"
-        new_content, n = re.subn(pattern, replacement, content, flags=re.MULTILINE)
+        new_content, n = re.subn(pattern, lambda match: replacement, content, flags=re.MULTILINE)
         if n > 0:
             content = new_content
         else:
             content += f"\n{replacement}\n"
+        os.environ[key] = val
 
     DOTENV_PATH.write_text(content, encoding="utf-8")
     return ApiResponse(success=True, message="配置已更新")
@@ -1262,38 +1269,12 @@ def _update_mining_metrics(task: Dict[str, Any]):
             rank_ic = bt.get("Rank IC", bt.get("rank_ic", bt.get("1day.excess_return_without_cost.rank_ic", 0)))
             rank_icir = bt.get("Rank ICIR", bt.get("rank_ic_ir", bt.get("1day.excess_return_without_cost.rank_ic_ir", 0)))
             
-            # Generate a mock equity curve for preview if real data is missing
-            # In production, this should come from actual backtest result files (CSV/H5)
-            # Here we generate a simple random walk with drift matching the annual return to show visual difference
+            # Missing observed portfolio data stays absent, never a random preview.
             cumulative_curve = []
-            annual_ret = bt.get("1day.excess_return_without_cost.annualized_return", 0)
-            max_dd = bt.get("1day.excess_return_with_cost.max_drawdown", 
-                                    bt.get("1day.excess_return_without_cost.max_drawdown", 0))
-            
-            # Calmar Ratio = Annual Return / Max Drawdown (absolute value)
-            # Avoid division by zero
-            cr = 0
-            if max_dd < 0:
-                cr = annual_ret / abs(max_dd)
-            elif max_dd > 0:
-                cr = annual_ret / max_dd
-            
-            # Simple simulation: 20 data points for preview sparkline
-            import random
-            current_val = 1.0
-            # Daily drift approx
-            drift = (1 + annual_ret) ** (1/252) - 1 if annual_ret else 0
-            vol = 0.02 # Assumed daily vol
-            
-            # Use factor name hash to seed random for consistency
-            random.seed(hash(f_info.get("factor_name", f_id)))
-            
-            for i in range(20):
-                 # Generate last 20 points
-                 ret = random.gauss(drift, vol)
-                 current_val *= (1 + ret)
-                 cumulative_curve.append({"value": current_val, "date": f"Day {i+1}"})
-            
+            annual_ret = bt.get("1day.excess_return_with_cost.annualized_return")
+            max_dd = bt.get("1day.excess_return_with_cost.max_drawdown")
+            cr = (annual_ret / abs(max_dd)) if isinstance(annual_ret, (int, float)) and isinstance(max_dd, (int, float)) and max_dd else None
+
             factor_list.append({
                 "factorName": f_info.get("factor_name", f_id),
                 "factorExpression": f_info.get("factor_expression", ""),
@@ -1331,6 +1312,19 @@ def _update_mining_metrics(task: Dict[str, Any]):
             
     except Exception:
         pass # Best effort
+
+# Add governance to the existing API, retaining the upstream routes.
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+from research_api import router as research_router
+app.include_router(research_router)
+
+# Production build is served same-origin; development retains the Vite proxy.
+_frontend_dist = PROJECT_ROOT / "frontend-v2" / "dist"
+if _frontend_dist.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="workbench")
 
 if __name__ == "__main__":
     import uvicorn

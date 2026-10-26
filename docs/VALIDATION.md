@@ -6,7 +6,7 @@
 
 | 检查 | 实际结果 |
 | --- | --- |
-| Python 测试 | 42 passed：经济失败分类、上下文隔离、记忆钩子、真实交易日 purge、缺失指标拒绝、候选约束、等预算、冻结与重复最终评估、密钥掩码与失败任务记忆保留 |
+| Python 测试 | 56 passed：经济失败分类、上下文隔离、记忆钩子、真实交易日 purge、必要指标及曲线有限性、候选约束、拒绝提案预算、全组失败留痕、等预算、冻结与重复最终评估、密钥掩码、失败任务记忆保留和 Markdown 报告 |
 | 模型协议 | 通过本地 HTTP 协议服务调用上游 APIBackend、OpenAI SDK 及 Anthropic SDK；覆盖 Step Plan 路径、api-key/Bearer 头、模型名、候选 JSON 和 holdout 不进入提示词。此项不是外部模型效果测试 |
 | 前端 | TypeScript 严格编译与 Vite 生产构建通过；修复上游缺失依赖和未使用导入 |
 | 真实 Qlib 链路 | 本地合成 provider → 上游因子表达式 → LightGBM → Qlib SimulatorExecutor / TopkDropoutStrategy → 成本后指标与净值 CSV |
@@ -30,6 +30,14 @@ Qlib 0.9.7、LightGBM 4.7.0、NumPy 1.26.4、Pandas 2.3.3；完整已验证依�
 
 通过 `scripts/verify_browser.py` 与 `scripts/verify_distributed.py` 可产生新的验收协议和证据；已完成的协议不会重新执行最终测试。
 
+### 实验可靠性与报告增量验收
+
+本轮重新通过 56 项 Python 测试和 TypeScript / Vite 构建，新增覆盖不合法提案计入预算并继续、全组失败的部分结果持久化、消融一组或两组全失败、NaN / Infinity 拒绝、报告缺失值和负值、从 JSON 证据再生成报告、下载端点及未知协议 404。
+
+浏览器重新完成 2 次有记忆 + 2 次无记忆真实 Qlib 研究、候选冻结、一次最终 holdout（92 个净值点）、重复评估拒绝、JSON 与 Markdown 下载、390 像素布局和无脚本异常。协议为 `57d4b823-a0d6-47c7-aaac-dc34c8824e11`，产物在本云实例 `/workspace/agent-dev/optimization-qa/`；可直接阅读 [报告快照](examples/research-report.md)。浏览器脚本改为等待当前协议的样本外回执，避免被侧栏的历史“已封存”标签误导。
+
+本轮未重新构建 Docker 镜像，也未重复 PostgreSQL / Redis 部署；下文中的容器和分布式记录属于此前验收。
+
 ## 真实结果及解释
 
 合成数据验收中的候选可以出现负收益。浏览器验收选择的候选，验证窗成本后超额年化约 -0.55%，最终 holdout 约 -11.50%；平台保留这些负结果与成本侵蚀记忆。该数字只说明结果按实际计算保存，没有市场投资含义。
@@ -43,6 +51,6 @@ Qlib 0.9.7、LightGBM 4.7.0、NumPy 1.26.4、Pandas 2.3.3；完整已验证依�
 - PyTorch 模型训练、C++ 高频执行与实盘交易网关。
 - 当前机器之外的新任务恢复、环境发布及远程部署。
 
-最终镜像为 `agentic-quant-research:local`，本次镜像 ID 为 `sha256:c9d982ec0efcfacf3b9c44cbbef798d6c696b13187b65596ef340f7c1ab4f1dd`。当前云机使用 Docker vfs，已把大型依赖安装合并到最后一层，避免后续 COPY 重复复制依赖。机构代理 CA 通过 BuildKit secret 挂载，TLS 校验保持启用。构建、容器健康检查和容器内完整 Qlib 流程均已实际验证。
+此前完成验收的镜像为 `agentic-quant-research:local`，镜像 ID 为 `sha256:c9d982ec0efcfacf3b9c44cbbef798d6c696b13187b65596ef340f7c1ab4f1dd`。当前云机使用 Docker vfs，已把大型依赖安装合并到最后一层，避免后续 COPY 重复复制依赖。机构代理 CA 通过 BuildKit secret 挂载，TLS 校验保持启用。该镜像的构建、健康检查和容器内完整 Qlib 流程均已实际验证；后续实验可靠性与 Markdown 报告的改动在本机 Python / API / 浏览器验证，尚未重建到该镜像。
 
 已知非阻塞项：上游依赖产生弃用警告，Vite 提示主 bundle 大于 500 kB；没有因此跳过断言或关闭 TypeScript 检查。

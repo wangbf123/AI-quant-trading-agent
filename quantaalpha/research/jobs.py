@@ -54,7 +54,7 @@ def execute_task(task_id: str, data_root: str | None = None, *, store: ResearchS
         return {"status": "completed", "task_id": task_id}
     except Exception as error:
         _persist_failed_research_memories(store, task)
-        store.finish_task(task_id, error=f"{type(error).__name__}: {error}")
+        store.finish_task(task_id, result=getattr(error, "partial_result", None), error=f"{type(error).__name__}: {error}")
         return {"status": "failed", "task_id": task_id}
 
 

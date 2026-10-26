@@ -42,7 +42,7 @@ def main():
         result = run_research(entry["protocol"], config, lambda event: print(event["message"], flush=True))
         store.finish_task(task["id"], result=result)
     except Exception as error:
-        store.finish_task(task["id"], error=f"{type(error).__name__}: {error}")
+        store.finish_task(task["id"], result=getattr(error, "partial_result", None), error=f"{type(error).__name__}: {error}")
         raise
     if args.finalize:
         entry = store.freeze(entry["id"], result["best_candidate"]["id"])

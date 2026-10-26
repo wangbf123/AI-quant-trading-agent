@@ -39,6 +39,14 @@ def test_api_research_freeze_finalize_and_export(monkeypatch, tmp_path):
         assert exported.status_code == 200
         assert exported.json()["state"] == "finalized"
         assert exported.json()["result"]["holdout"] is not None
+        report = client.get(path + '/report')
+        assert report.status_code == 200
+        assert report.headers['content-type'].startswith('text/markdown')
+        assert f'research-{protocol_id}.md' in report.headers['content-disposition']
+        assert '量化研究报告' in report.text
+        assert '-2.00%' in report.text
+        assert '合成数据' in report.text
+        assert client.get('/api/v1/research/protocols/missing/report').status_code == 404
         assert client.get('/api/v1/research/memories').json()["data"]["memories"] == []
 
 

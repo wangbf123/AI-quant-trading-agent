@@ -40,7 +40,9 @@ def main():
         final.click()
         expect(page.get_by_role("dialog")).to_be_visible()
         page.get_by_role("button", name="确认评估一次").click()
-        expect(page.get_by_text("研究已封存", exact=True).first).to_be_visible(timeout=90_000)
+        # The sidebar may contain older finalized protocols; await the active
+        # protocol's holdout receipt instead of any historical status label.
+        expect(page.get_by_text("已评估一次，禁止回流记忆", exact=True)).to_be_visible(timeout=90_000)
         expect(final).to_be_disabled()
         with page.expect_download() as download:
             page.get_by_role("button", name="证据包").click()
@@ -54,6 +56,16 @@ def main():
         assert result["ablation"]["without_memory"]["evaluations"] == 2
         assert result["provenance"]["source"] == "synthetic"
         assert all(memory["source_split"] == "validation" for memory in result["memories"])
+        with page.expect_download() as report_download:
+            page.get_by_role('button', name='研究报告', exact=True).click()
+        report_path = artifacts / 'research-report.md'
+        report_download.value.save_as(report_path)
+        report = report_path.read_text()
+        assert report_download.value.suggested_filename == f'research-{protocol_id}.md'
+        assert '量化研究报告' in report and protocol_id in report
+        assert '合成数据（仅用于工程验证）' in report
+        assert '尚未取得最终样本外结果' not in report
+        assert '等预算消融' in report
         with httpx.Client(base_url=url, trust_env=False) as client:
             repeated = client.post(f"/api/v1/research/protocols/{protocol_id}/finalize")
             assert repeated.status_code == 409, repeated.text
@@ -63,7 +75,7 @@ def main():
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Mobile viewport overflows"
         assert not errors, errors
         browser.close()
-    print(json.dumps({"status": "passed", "protocol_id": protocol_id, "validated": ["UI research submission", "four real Qlib validation trials", "equal-budget ablation", "candidate freeze", "real final holdout", "duplicate-finalization rejection", "evidence download", "mobile layout", "no browser exceptions"], "artifacts": str(artifacts)}, indent=2))
+    print(json.dumps({"status": "passed", "protocol_id": protocol_id, "validated": ["UI research submission", "four real Qlib validation trials", "equal-budget ablation", "candidate freeze", "real final holdout", "duplicate-finalization rejection", "evidence download", "Markdown report download", "mobile layout", "no browser exceptions"], "artifacts": str(artifacts)}, indent=2))
 
 
 if __name__ == "__main__":

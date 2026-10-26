@@ -14,6 +14,7 @@ export interface ResearchTrial {
   failure_tags?: string[];
   reasoning?: string;
   status?: string;
+  error?: string;
 }
 
 export interface ResearchMemory {
@@ -44,8 +45,8 @@ export interface ResearchEvaluation {
 export interface ResearchResult {
   trials?: ResearchTrial[];
   memories?: ResearchMemory[];
-  validation?: ResearchEvaluation;
-  best_candidate?: ResearchRecord | string;
+  validation?: ResearchEvaluation | null;
+  best_candidate?: ResearchRecord | string | null;
   holdout?: ResearchEvaluation | null;
   ablation?: ResearchRecord | null;
   events?: ResearchEvent[];
@@ -118,14 +119,14 @@ export const freezeResearchCandidate = (id: string, candidateId: string) =>
 export const finalizeResearchProtocol = (id: string) =>
   request<{ protocol?: ResearchProtocol; task?: ResearchTask }>(`/protocols/${encodeURIComponent(id)}/finalize`, {});
 
-export async function exportResearchProtocol(id: string): Promise<void> {
-  const response = await fetch(`${BASE}/protocols/${encodeURIComponent(id)}/export`);
+export async function exportResearchProtocol(id: string, format: 'json' | 'markdown' = 'json'): Promise<void> {
+  const response = await fetch(`${BASE}/protocols/${encodeURIComponent(id)}/${format === 'markdown' ? 'report' : 'export'}`);
   if (!response.ok) throw new Error(`导出失败 (${response.status})`);
-  const content = await response.json();
-  const url = URL.createObjectURL(new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' }));
+  const content = format === 'markdown' ? await response.text() : JSON.stringify(await response.json(), null, 2);
+  const url = URL.createObjectURL(new Blob([content], { type: format === 'markdown' ? 'text/markdown' : 'application/json' }));
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `research-${id}.json`;
+  anchor.download = `research-${id}.${format === 'markdown' ? 'md' : 'json'}`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

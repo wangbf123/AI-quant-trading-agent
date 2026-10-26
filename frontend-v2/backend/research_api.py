@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from quantaalpha.research.store import ResearchStore, StateConflict, plain, utc_now
@@ -173,6 +173,12 @@ def create_research_router(project_root: Path, store: ResearchStore | None = Non
     @router.get("/memories")
     def get_memories(dataset_fingerprint: str | None = None):
         return {"success": True, "data": {"memories": store.list_memories(dataset_fingerprint)}}
+
+    @router.get("/protocols/{protocol_id}/report")
+    def report_protocol(protocol_id: str):
+        from quantaalpha.research.report import render_research_report
+        return PlainTextResponse(render_research_report(entry_or_404(protocol_id)),
+            media_type="text/markdown", headers={"Content-Disposition": f'attachment; filename="research-{protocol_id}.md"'})
 
     @router.post("/demo")
     def create_demo(request: RunRequest):

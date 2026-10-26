@@ -75,6 +75,7 @@ flowchart LR
 | 模型接口如何接入 | [`anthropic_transport.py`](quantaalpha/research/anthropic_transport.py) · [`APIBackend`](quantaalpha/llm/client.py) | StepFun Messages 与保留的 OpenAI 路径 |
 | 数据和任务如何落地 | [`fixture.py`](quantaalpha/research/fixture.py) · [`jobs.py`](quantaalpha/research/jobs.py) | 合成 Qlib provider、持久化任务、Redis/RQ |
 | 网页与 API | [`frontend-v2/`](frontend-v2/) · [`research_api.py`](frontend-v2/backend/research_api.py) | 研究工作台、可视化、协议与证据导出 |
+| 如何阅读实验结论 | [`report.py`](quantaalpha/research/report.py) | 确定性中文报告：窗口、候选、失败、消融与最终样本外结果 |
 | 如何复现和验证 | [`scripts/`](scripts/) · [`tests/`](tests/) · [CI](.github/workflows/ci.yml) | 安装、启动、浏览器／容器验收与自动检查 |
 
 ## 网页工作台导览
@@ -167,6 +168,15 @@ docker compose --profile distributed up --build
 ```
 
 默认容器化本地模式：`docker compose up --build app`。分布式模式需在首次启动时等待数据库初始化；同一研究产物卷供 API 和 Worker 使用。Compose 的数据库信任认证仅用于隔离的本地开发网络，不发布数据库或 Redis 端口。
+
+## 实验可靠性与研究报告
+
+- 不合法的模型提案按一次尝试计入预算，保留拒绝原因并继续下一次；不会替换为演示候选。消融两组使用同样规则，即使一组全部失败也保留完整记录。
+- 每次尝试写入 `trials.json` 检查点；全组失败时，任务仍保留部分结果供页面和证据导出查看。提案格式错误不会被当作经济性失败记忆。
+- Qlib 必须产出有限的必要指标和完整的有限数值曲线，NaN / Infinity 不能被标成成功实验。
+- 工作台点击「研究报告」下载中文 Markdown，点击「证据包」下载原始 JSON。报告由已保存证据生成，无需再次调用模型；负值、零值、缺失指标和未评估的 holdout 都按实际状态展示。
+
+API 对应 `GET /api/v1/research/protocols/{id}/report` 与 `GET /api/v1/research/protocols/{id}/export`。可以直接阅读仓库里的 [实际运行报告示例](docs/examples/research-report.md)（合成数据），规则详见 [研究协议](docs/RESEARCH_PROTOCOL.md)。
 
 ## 验证
 

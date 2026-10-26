@@ -1,9 +1,12 @@
 import React, { useEffect, useRef } from 'react';
+import { useReducedMotion } from 'framer-motion';
 
 export const ParticleBackground: React.FC = () => {
+  const reduced = useReducedMotion();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    if (reduced) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -35,6 +38,7 @@ export const ParticleBackground: React.FC = () => {
       });
     }
 
+    let frame = 0;
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -67,7 +71,7 @@ export const ParticleBackground: React.FC = () => {
         });
       });
 
-      requestAnimationFrame(animate);
+      frame = requestAnimationFrame(animate);
     };
 
     animate();
@@ -80,9 +84,10 @@ export const ParticleBackground: React.FC = () => {
     window.addEventListener('resize', handleResize);
 
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener('resize', handleResize);
     };
-  }, []);
+  }, [reduced]);
 
   return (
     <canvas

@@ -1,8 +1,9 @@
-import React from 'react';
-import { Sparkles, Database, BarChart3, Settings as SettingsIcon, FlaskConical } from 'lucide-react';
+import React, { useId } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { Sparkles, Database, BarChart3, Settings as SettingsIcon, FlaskConical, Compass } from 'lucide-react';
 import { useTaskContext } from '@/context/TaskContext';
 
-export type PageId = 'research' | 'home' | 'library' | 'backtest' | 'settings' | 'mining_dashboard';
+export type PageId = 'guide' | 'research' | 'home' | 'library' | 'backtest' | 'settings' | 'mining_dashboard';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -18,6 +19,8 @@ export const Layout: React.FC<LayoutProps> = ({
   showNavigation = true,
 }) => {
   const { miningTask } = useTaskContext();
+  const navId = useId();
+  const reduced = useReducedMotion();
 
   // Helper to determine where 'Factor Mining' nav item should go
   const handleNavClick = (itemId: PageId) => {
@@ -35,7 +38,8 @@ export const Layout: React.FC<LayoutProps> = ({
   };
 
   const navItems = [
-    { id: 'research' as const, label: '研究协议', icon: FlaskConical },
+    { id: 'guide' as const, label: '项目导览', icon: Compass },
+    { id: 'research' as const, label: '研究协议', icon: FlaskConical, Compass },
     { id: 'home' as const, label: '因子挖掘', icon: Sparkles },
     { id: 'library' as const, label: '因子库', icon: Database },
     { id: 'backtest' as const, label: '回测', icon: BarChart3 },
@@ -50,7 +54,7 @@ export const Layout: React.FC<LayoutProps> = ({
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
             <div 
               className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => onNavigate('research')}
+              onClick={() => onNavigate('guide')}
             >
               <div className="relative">
                 <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-purple-600">
@@ -72,18 +76,22 @@ export const Layout: React.FC<LayoutProps> = ({
                     // Highlight 'Factor Mining' if we are on dashboard OR home
                     const isActive = currentPage === item.id || (item.id === 'home' && currentPage === 'mining_dashboard');
                     return (
-                      <button
+                      <motion.button
+                        whileHover={reduced ? undefined : { y: -2 }}
+                        whileTap={reduced ? undefined : { scale: .97 }}
+                        aria-current={isActive ? 'page' : undefined}
                         key={item.id}
                         onClick={() => handleNavClick(item.id)}
-                        className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg transition-all ${
+                        className={`relative isolate flex shrink-0 items-center gap-2 px-3 sm:px-4 py-2 rounded-lg transition-colors ${
                           isActive
-                            ? 'bg-primary text-primary-foreground'
+                            ? 'text-primary-foreground'
                             : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                         }`}
                       >
+                        {isActive && <motion.span layoutId={`${navId}-active`} transition={{ duration: reduced ? 0 : .3, type: 'spring', bounce: .15 }} className="absolute inset-0 -z-10 rounded-lg bg-primary shadow-sm" />}
                         <Icon className="h-4 w-4" />
                         <span className="text-sm font-medium">{item.label}</span>
-                      </button>
+                      </motion.button>
                     );
                   })}
                 </nav>

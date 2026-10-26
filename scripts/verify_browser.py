@@ -20,6 +20,8 @@ def main():
         page = browser.new_page(viewport={"width": 1440, "height": 1100}, device_scale_factor=1)
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(url, wait_until="networkidle")
+        if page.get_by_role("button", name="进入研究工作台").is_visible():
+            page.get_by_role("button", name="进入研究工作台").click()
         expect(page.get_by_role("heading", name="让每一次研究，都留下证据。")).to_be_visible()
         expect(page.get_by_role("button", name="启动本地演示研究")).to_be_enabled()
         page.get_by_label("每组实验预算").fill("2")
